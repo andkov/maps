@@ -37,11 +37,11 @@ This serves as the foundation map for all subsequent `yeg-*` analyses.
 | `dem`         | AWS Terrain Tiles via `{elevatr}` | z = 12, \~19 m/px                               |
 | `hill`        | Derived from `dem`                | `terra::shade()`, azimuth 315°, angle 35°       |
 | `contours`    | Derived from `dem`                | `terra::as.contour()`, 30 levels                |
-| `rivers`      | OpenStreetMap via Geofabrik PBF       | `waterway` = river, stream, canal               |
-| `water_polys` | OpenStreetMap via Geofabrik PBF       | `natural` = water                               |
-| `parks`       | OpenStreetMap via Geofabrik PBF       | `leisure` = park, nature_reserve                |
-| `green`       | OpenStreetMap via Geofabrik PBF       | `natural` = wood, scrub, grassland              |
-| `roads`       | OpenStreetMap via Geofabrik PBF       | `highway` = motorway, trunk, primary, secondary |
+| `rivers`      | OpenStreetMap via Geofabrik PBF   | `waterway` = river, stream, canal               |
+| `water_polys` | OpenStreetMap via Geofabrik PBF   | `natural` = water                               |
+| `parks`       | OpenStreetMap via Geofabrik PBF   | `leisure` = park, nature_reserve                |
+| `green`       | OpenStreetMap via Geofabrik PBF   | `natural` = wood, scrub, grassland              |
+| `roads`       | OpenStreetMap via Geofabrik PBF   | `highway` = motorway, trunk, primary, secondary |
 
 CRS for all rendered layers: **EPSG:3400** (NAD83 / Alberta 10-TM Forest)
 
@@ -230,6 +230,84 @@ ggplot() +
   labs(
     title    = "Edmonton Metropolitan Area",
     subtitle = "Topographic reference map  |  Ring road extent + inner suburbs",
+    caption  = "Sources: AWS Terrain Tiles, OpenStreetMap / Geofabrik  |  CRS: EPSG:3400"
+  )
+```
+
+## Major Roads Only (g21)
+
+Same as `g2` but arterial roads removed — cleaner at smaller print sizes.
+
+```{r}
+#| label: g21-major-roads
+#| fig-cap: "Topographic map with major roads only (motorway + trunk)"
+ggplot() +
+  geom_spatraster(data = hill) +
+  scale_fill_gradient(low = "grey15", high = "grey98",
+                      guide = "none", na.value = "transparent") +
+  geom_sf(data = green,       fill = "#c8dfc0", colour = NA, alpha = 0.6) +
+  geom_sf(data = parks,       fill = "#b5d4a8", colour = NA, alpha = 0.7) +
+  geom_sf(data = water_polys, fill = color_water, colour = NA) +
+  geom_sf(data = rivers,      colour = color_water, linewidth = 0.5) +
+  geom_sf(data = filter(roads, road_class == "major"),
+          colour = "#d4945a", linewidth = 0.9) +
+  geom_sf(data = contours, colour = "grey50", linewidth = 0.15, alpha = 0.4) +
+  annotation_scale(location = "br", unit_category = "metric", text_cex = 0.7) +
+  annotation_north_arrow(location = "tl",
+                         style = north_arrow_minimal(text_size = 8)) +
+  coord_sf(crs = crs_ab, xlim = xlims, ylim = ylims, expand = FALSE) +
+  theme_map() +
+  labs(
+    title    = "Edmonton Metropolitan Area",
+    subtitle = "Major roads only (motorway + trunk)  |  Ring road extent + inner suburbs",
+    caption  = "Sources: AWS Terrain Tiles, OpenStreetMap / Geofabrik  |  CRS: EPSG:3400"
+  )
+```
+
+## SW River Valley Zoom (g22)
+
+Zoom onto the area around 5315 143 St NW — Terwillegar / Whitemud Creek confluence. Arterials restored at this scale for navigational context.
+
+```{r}
+#| label: g22-zoom-sw
+#| fig-cap: "Zoom: SW Edmonton river valley around 5315 143 St NW"
+zoom_bbox_wgs <- sf::st_bbox(
+  c(xmin = -113.645, ymin = 53.440, xmax = -113.505, ymax = 53.545),
+  crs = 4326
+)
+zoom_poly_ab <- sf::st_as_sfc(zoom_bbox_wgs) |> sf::st_transform(crs_ab)
+zoom_ext     <- sf::st_bbox(zoom_poly_ab)
+z_xlims      <- c(zoom_ext["xmin"], zoom_ext["xmax"])
+z_ylims      <- c(zoom_ext["ymin"], zoom_ext["ymax"])
+
+# 5315 143 St NW: ~53.490°N, 113.578°W
+star_xy <- sf::st_sfc(sf::st_point(c(-113.578, 53.490)), crs = 4326) |>
+  sf::st_transform(crs_ab) |>
+  sf::st_coordinates()
+
+ggplot() +
+  geom_spatraster(data = hill) +
+  scale_fill_gradient(low = "grey15", high = "grey98",
+                      guide = "none", na.value = "transparent") +
+  geom_sf(data = green,       fill = "#c8dfc0", colour = NA, alpha = 0.6) +
+  geom_sf(data = parks,       fill = "#b5d4a8", colour = NA, alpha = 0.7) +
+  geom_sf(data = water_polys, fill = color_water, colour = NA) +
+  geom_sf(data = rivers,      colour = color_water, linewidth = 0.7) +
+  geom_sf(data = filter(roads, road_class == "major"),
+          colour = "#d4945a", linewidth = 1.2) +
+  geom_sf(data = filter(roads, road_class == "arterial"),
+          colour = color_road, linewidth = 0.5) +
+  geom_sf(data = contours, colour = "grey50", linewidth = 0.2, alpha = 0.5) +
+  annotate("text", x = star_xy[, "X"], y = star_xy[, "Y"],
+           label = "\u2605", colour = "gold", size = 7) +
+  annotation_scale(location = "br", unit_category = "metric", text_cex = 0.7) +
+  annotation_north_arrow(location = "tl",
+                         style = north_arrow_minimal(text_size = 8)) +
+  coord_sf(crs = crs_ab, xlim = z_xlims, ylim = z_ylims, expand = FALSE) +
+  theme_map() +
+  labs(
+    title    = "SW Edmonton \u2014 River Valley Zoom",
+    subtitle = "\u2605 5315 143 St NW  |  Terwillegar / Whitemud area",
     caption  = "Sources: AWS Terrain Tiles, OpenStreetMap / Geofabrik  |  CRS: EPSG:3400"
   )
 ```

@@ -235,9 +235,116 @@ g2 <- ggplot() +
 
 print(g2)
 
+# ---- map-g21 -----------------------------------------------------------------
+# g21: Like g2 but major roads only (no arterials)
+
+g21 <- ggplot() +
+  tidyterra::geom_spatraster(data = hill) +
+  scale_fill_gradient(
+    low  = "grey15",
+    high = "grey98",
+    guide = "none",
+    na.value = "transparent"
+  ) +
+  geom_sf(data = green,       fill = "#c8dfc0", colour = NA, alpha = 0.6) +
+  geom_sf(data = parks,       fill = "#b5d4a8", colour = NA, alpha = 0.7) +
+  geom_sf(data = water_polys, fill = color_water, colour = NA) +
+  geom_sf(data = rivers,      colour = color_water, linewidth = 0.5) +
+  geom_sf(
+    data      = dplyr::filter(roads, road_class == "major"),
+    colour    = "#d4945a",
+    linewidth = 0.9
+  ) +
+  geom_sf(data = contours, colour = "grey50", linewidth = 0.15, alpha = 0.4) +
+  ggspatial::annotation_scale(
+    location      = "br",
+    unit_category = "metric",
+    text_cex      = 0.7
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "tl",
+    style    = ggspatial::north_arrow_minimal(text_size = 8)
+  ) +
+  coord_sf(crs = crs_ab, xlim = xlims, ylim = ylims, expand = FALSE) +
+  theme_map() +
+  labs(
+    title    = "Edmonton Metropolitan Area",
+    subtitle = "Major roads only (motorway + trunk)  |  Ring road extent + inner suburbs",
+    caption  = paste0(
+      "Sources: AWS Terrain Tiles, OpenStreetMap / Geofabrik  |",
+      "  CRS: EPSG:3400"
+    )
+  )
+
+print(g21)
+
+# ---- map-g22 -----------------------------------------------------------------
+# g22: Zoom onto SW Edmonton river valley around 5315 143 St NW
+# Address approx: 53.490°N, 113.578°W — Terwillegar / Whitemud area
+
+zoom_bbox_wgs <- sf::st_bbox(
+  c(xmin = -113.645, ymin = 53.440, xmax = -113.505, ymax = 53.545),
+  crs = 4326
+)
+zoom_poly_ab <- sf::st_as_sfc(zoom_bbox_wgs) |> sf::st_transform(crs_ab)
+zoom_ext     <- sf::st_bbox(zoom_poly_ab)
+z_xlims      <- c(zoom_ext["xmin"], zoom_ext["xmax"])
+z_ylims      <- c(zoom_ext["ymin"], zoom_ext["ymax"])
+
+# 5315 143 St NW: ~53.490°N, 113.578°W
+star_xy <- sf::st_sfc(sf::st_point(c(-113.578, 53.490)), crs = 4326) |>
+  sf::st_transform(crs_ab) |>
+  sf::st_coordinates()
+
+g22 <- ggplot() +
+  tidyterra::geom_spatraster(data = hill) +
+  scale_fill_gradient(
+    low  = "grey15",
+    high = "grey98",
+    guide = "none",
+    na.value = "transparent"
+  ) +
+  geom_sf(data = green,       fill = "#c8dfc0", colour = NA, alpha = 0.6) +
+  geom_sf(data = parks,       fill = "#b5d4a8", colour = NA, alpha = 0.7) +
+  geom_sf(data = water_polys, fill = color_water, colour = NA) +
+  geom_sf(data = rivers,      colour = color_water, linewidth = 0.7) +
+  geom_sf(
+    data      = dplyr::filter(roads, road_class == "major"),
+    colour    = "#d4945a",
+    linewidth = 1.2
+  ) +
+  geom_sf(
+    data      = dplyr::filter(roads, road_class == "arterial"),
+    colour    = color_road,
+    linewidth = 0.5
+  ) +
+  geom_sf(data = contours, colour = "grey50", linewidth = 0.2, alpha = 0.5) +
+  annotate("text", x = star_xy[, "X"], y = star_xy[, "Y"],
+           label = "\u2605", colour = "gold", size = 7) +
+  ggspatial::annotation_scale(
+    location      = "br",
+    unit_category = "metric",
+    text_cex      = 0.7
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "tl",
+    style    = ggspatial::north_arrow_minimal(text_size = 8)
+  ) +
+  coord_sf(crs = crs_ab, xlim = z_xlims, ylim = z_ylims, expand = FALSE) +
+  theme_map() +
+  labs(
+    title    = "SW Edmonton — River Valley Zoom",
+    subtitle = "\u2605 5315 143 St NW  |  Terwillegar / Whitemud area",
+    caption  = "Sources: AWS Terrain Tiles, OpenStreetMap / Geofabrik  |  CRS: EPSG:3400"
+  )
+
+print(g22)
+
 # ---- save-outputs ------------------------------------------------------------
 # Uncomment to save when satisfied with the layout
-# ggsave("analysis/yeg-1/yeg-1-terrain.png",  g1, width = 12, height = 10, dpi = 200)
-# ggsave("analysis/yeg-1/yeg-1-full.png",     g2, width = 12, height = 10, dpi = 200)
+# ggsave("analysis/yeg-1/yeg-1-terrain.png",    g1,  width = 12, height = 10, dpi = 200)
+# ggsave("analysis/yeg-1/yeg-1-full.png",       g2,  width = 12, height = 10, dpi = 200)
+# ggsave("analysis/yeg-1/yeg-1-major-roads.png", g21, width = 12, height = 10, dpi = 200)
+# ggsave("analysis/yeg-1/yeg-1-zoom-sw.png",    g22, width = 12, height = 10, dpi = 200)
 
 # nolint end
