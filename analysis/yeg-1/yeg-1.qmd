@@ -1,0 +1,244 @@
+---
+title: "Edmonton Topographic Map"
+subtitle: "YEG-1 — Ring road extent + inner suburbs"
+author: "Maps Project"
+format:
+  html:
+    page-layout: full
+    toc: true
+    toc-location: right
+    code-fold: show
+    theme: yeti
+    highlight-style: breeze
+    code-line-numbers: true
+    self-contained: true
+    embed-resources: true
+    keep-md: false
+editor: visual
+editor_options:
+  chunk_output_type: console
+---
+
+# Mission
+
+Produce a layered static topographic map of Edmonton (ring road extent plus St. Albert, Sherwood Park, and Windermere) that combines:
+
+-   **Terrain texture** — hillshade derived from a 19 m DEM
+-   **Contour lines** — 10 m interval from the same DEM
+-   **Physical features** — North Saskatchewan River, lakes, parks, green space
+-   **Road network** — ring road, arterials (no residential clutter)
+
+This serves as the foundation map for all subsequent `yeg-*` analyses.
+
+# Data Genealogy
+
+| Object        | Source                            | Notes                                           |
+|------------------------|------------------------|------------------------|
+| `dem`         | AWS Terrain Tiles via `{elevatr}` | z = 12, \~19 m/px                               |
+| `hill`        | Derived from `dem`                | `terra::shade()`, azimuth 315°, angle 35°       |
+| `contours`    | Derived from `dem`                | `terra::as.contour()`, 30 levels                |
+| `rivers`      | OpenStreetMap via Geofabrik PBF       | `waterway` = river, stream, canal               |
+| `water_polys` | OpenStreetMap via Geofabrik PBF       | `natural` = water                               |
+| `parks`       | OpenStreetMap via Geofabrik PBF       | `leisure` = park, nature_reserve                |
+| `green`       | OpenStreetMap via Geofabrik PBF       | `natural` = wood, scrub, grassland              |
+| `roads`       | OpenStreetMap via Geofabrik PBF       | `highway` = motorway, trunk, primary, secondary |
+
+CRS for all rendered layers: **EPSG:3400** (NAD83 / Alberta 10-TM Forest)
+
+```{r}
+#| label: reconcile-wd
+#| echo: false
+#| results: hide
+#| message: false
+#| warning: false
+library(knitr)
+opts_knit$set(root.dir = "../../")
+```
+
+```{r}
+#| label: set-options
+#| echo: false
+#| results: hide
+#| message: false
+#| warning: false
+cat("Working directory: ", getwd())
+report_render_start_time <- Sys.time()
+opts_chunk$set(
+  results = "show",
+  message = FALSE,
+  warning = FALSE,
+  comment = NA,
+  tidy    = FALSE,
+  echo    = TRUE,
+  fig.width  = 12,
+  fig.height = 10,
+  out.width  = "100%"
+)
+```
+
+```{r}
+#| label: load-packages
+#| code-summary: "Load packages"
+library(magrittr)
+library(ggplot2)
+library(dplyr)
+library(sf)
+library(terra)
+library(elevatr)
+library(osmextract)   # Geofabrik PBF -- no Overpass API rate limits
+library(tidyterra)
+library(ggspatial)
+
+source("scripts/graphing/map-theme.R")
+```
+
+# Area of Interest
+
+```{r}
+#| label: define-bbox
+#| code-summary: "Bounding box and CRS"
+yeg_bbox <- c(xmin = -113.80, ymin = 53.38, xmax = -113.27, ymax = 53.72)
+# elevatr requires an sf data frame (not bare sfc)
+yeg_bbox_sf <- st_as_sf(st_as_sfc(st_bbox(yeg_bbox, crs = st_crs(4326))))
+crs_ab <- 3400  # NAD83 / Alberta 10-TM Forest
+```
+
+Extent covers the Anthony Henday ring road with \~10 km margin to include St. Albert (NW), Sherwood Park (E), and Windermere (SW).
+
+# Elevation Data
+
+```{r}
+#| label: download-dem
+#| code-summary: "Download DEM and compute hillshade + contours"
+#| cache: true
+dem_raw <- elevatr::get_elev_raster(locations = yeg_bbox_sf, z = 12, src = "aws")
+dem     <- terra::rast(dem_raw)
+dem     <- terra::project(dem, paste0("EPSG:", crs_ab))
+
+slope  <- terra::terrain(dem, "slope",  unit = "radians")
+aspect <- terra::terrain(dem, "aspect", unit = "radians")
+hill   <- terra::shade(slope, aspect, angle = 35, direction = 315)
+
+contours <- terra::as.contour(dem, nlevels = 30) |>
+  sf::st_as_sf() |>
+  sf::st_transform(crs_ab)
+
+# Map extent limits used in coord_sf to clip all layers to DEM bbox
+map_ext <- terra::ext(dem)
+xlims   <- c(map_ext$xmin, map_ext$xmax)
+ylims   <- c(map_ext$ymin, map_ext$ymax)
+```
+
+# Physical Features (OSM)
+
+```{r}
+#| label: osm-queries
+#| code-summary: "Read OSM layers from Geofabrik Alberta PBF (local, no API)"
+#| cache: true
+# PBF downloaded once to data-public/raw/osm/ via oe_get(); all reads are local.
+osm_dir <- "data-public/raw/osm"
+options(osmextract.download_directory = osm_dir)
+
+oe_get("Alberta", provider = "geofabrik", layer = "lines",
+       download_only = TRUE, quiet = TRUE, download_directory = osm_dir)
+oe_get("Alberta", provider = "geofabrik", layer = "multipolygons",
+       download_only = TRUE, quiet = TRUE, download_directory = osm_dir)
+
+pbf_path <- normalizePath(
+  list.files(osm_dir, pattern = "alberta.*\\.osm\\.pbf$", full.names = TRUE)[1]
+)
+
+clip_wgs <- yeg_bbox_sf
+clip_ab  <- st_transform(clip_wgs, crs_ab)
+safe_crop <- function(x, clip) {
+  if (is.null(x) || nrow(x) == 0) return(x)
+  st_crop(st_make_valid(x), clip)
+}
+
+read_lines <- function(query) {
+  oe_read(pbf_path, layer = "lines", query = query,
+          wkt_filter = st_as_text(st_geometry(clip_wgs)), quiet = TRUE) |>
+    st_transform(crs_ab) |> safe_crop(clip_ab)
+}
+read_polys <- function(query) {
+  oe_read(pbf_path, layer = "multipolygons", query = query,
+          wkt_filter = st_as_text(st_geometry(clip_wgs)), quiet = TRUE) |>
+    st_transform(crs_ab) |> safe_crop(clip_ab)
+}
+
+rivers      <- read_lines("SELECT * FROM lines WHERE waterway IN ('river','stream','canal')")
+water_polys <- read_polys("SELECT * FROM multipolygons WHERE natural = 'water'")
+parks       <- read_polys("SELECT * FROM multipolygons WHERE leisure IN ('park','nature_reserve')")
+green       <- read_polys("SELECT * FROM multipolygons WHERE natural IN ('wood','scrub','grassland')")
+roads       <- read_lines(
+  "SELECT * FROM lines WHERE highway IN ('motorway','trunk','primary','secondary')"
+) |> mutate(road_class = case_when(
+    highway %in% c("motorway","trunk")    ~ "major",
+    highway %in% c("primary","secondary") ~ "arterial",
+    TRUE                                   ~ "other"
+  ))
+```
+
+# Maps
+
+## Terrain Layer (g1)
+
+Hillshade and contour lines only — baseline terrain texture.
+
+```{r}
+#| label: g1-terrain
+#| fig-cap: "Hillshade + 10 m contours derived from AWS Terrain Tiles z=12"
+ggplot() +
+  geom_spatraster(data = hill) +
+  scale_fill_gradient(low = "grey15", high = "grey98",
+                      guide = "none", na.value = "transparent") +
+  geom_sf(data = contours, colour = "grey40", linewidth = 0.2, alpha = 0.6) +
+  coord_sf(crs = crs_ab, xlim = xlims, ylim = ylims, expand = FALSE) +
+  theme_map() +
+  labs(
+    title    = "Edmonton — Terrain",
+    subtitle = "Hillshade + 10 m contours  |  DEM: AWS Terrain Tiles z=12",
+    caption  = "CRS: NAD83 / Alberta 10-TM (EPSG:3400)"
+  )
+```
+
+## Full Topographic Map (g2)
+
+All layers combined.
+
+```{r}
+#| label: g2-full-map
+#| fig-cap: "Layered topographic map of the Edmonton ring-road extent"
+ggplot() +
+  geom_spatraster(data = hill) +
+  scale_fill_gradient(low = "grey15", high = "grey98",
+                      guide = "none", na.value = "transparent") +
+  geom_sf(data = green,       fill = "#c8dfc0", colour = NA, alpha = 0.6) +
+  geom_sf(data = parks,       fill = "#b5d4a8", colour = NA, alpha = 0.7) +
+  geom_sf(data = water_polys, fill = color_water, colour = NA) +
+  geom_sf(data = rivers,      colour = color_water, linewidth = 0.5) +
+  geom_sf(data = filter(roads, road_class == "major"),
+          colour = "#d4945a", linewidth = 0.9) +
+  geom_sf(data = filter(roads, road_class == "arterial"),
+          colour = color_road, linewidth = 0.4) +
+  geom_sf(data = contours, colour = "grey50", linewidth = 0.15, alpha = 0.4) +
+  annotation_scale(location = "br", unit_category = "metric", text_cex = 0.7) +
+  annotation_north_arrow(location = "tl",
+                         style = north_arrow_minimal(text_size = 8)) +
+  coord_sf(crs = crs_ab, xlim = xlims, ylim = ylims, expand = FALSE) +
+  theme_map() +
+  labs(
+    title    = "Edmonton Metropolitan Area",
+    subtitle = "Topographic reference map  |  Ring road extent + inner suburbs",
+    caption  = "Sources: AWS Terrain Tiles, OpenStreetMap / Geofabrik  |  CRS: EPSG:3400"
+  )
+```
+
+# Session Info
+
+```{r}
+#| label: session-info
+#| code-summary: "Reproducibility snapshot"
+cat("Report rendered:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
+sessionInfo()
+```
