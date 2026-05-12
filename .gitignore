@@ -48,6 +48,12 @@ rsconnect/
 #   Depending on how you do it, you might need to add w/ the command line
 #   eg, `git add -f ./data-private/raw/README.md`
 !README.md
+
+# ---- Large OSM / Geofabrik files -----------------------------------------
+# Alberta PBF (~200 MB) and derived GeoPackage files from osmextract.
+# Regenerated automatically on first run via oe_get("Alberta").
+data-public/raw/osm/*.osm.pbf
+data-public/raw/osm/*.gpkg
 !data-private/contents.md
 !data-private/raw/README.md
 !data-private/derived/README.md
